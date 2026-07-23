@@ -1,0 +1,54 @@
+# Terraform local state and working data
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Local/environment-specific configuration
+*.tfvars
+*.tfvars.json
+.env
+.env.*
+*.env
+
+# Keys, credentials, and local tooling
+*.pem
+
+# Terraform local state, plans, caches, and environment-specific values.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+crash.log
+
+*.key
+*.pfx
+*.p12
+*.jks
+*.mobileprovision
+.azure/
+
+# Python development artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Python local environments, bytecode, and test/tool caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

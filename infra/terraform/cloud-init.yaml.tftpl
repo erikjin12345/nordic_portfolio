@@ -1,0 +1,144 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - docker.io
+  - jq
+
+users:
+  - default
+  - name: ${admin_username}
+    groups:
+      - docker
+    shell: /bin/bash
+
+write_files:
+  - path: /etc/nordic-portfolio/config
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PORTFOLIO_IMAGE=${container_image}
+      KEY_VAULT_URI=${key_vault_uri}
+      JOB_TIMEOUT_SECONDS=${job_timeout_seconds}
+      CONTAINER_MEMORY=${container_memory}
+
+  - path: /etc/nordic-portfolio/secret-mappings
+    owner: root:root
+    permissions: "0644"
+    content: |
+      ${indent(6, secret_mappings)}
+
+  - path: /usr/local/sbin/run-nordic-portfolio
+    owner: root:root
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /etc/nordic-portfolio/config
+
+      exec 9>/run/nordic-portfolio.lock
+      if ! flock -n 9; then
+        echo "A portfolio job is already running; exiting." >&2
+        exit 0
+      fi
+
+      runtime_env="$(mktemp /run/nordic-portfolio-env.XXXXXX)"
+      chmod 600 "$${runtime_env}"
+      cleanup() {
+        rm -f "$${runtime_env}"
+      }
+      trap cleanup EXIT
+
+      token="$(
+        curl --fail --silent --show-error --noproxy "*" \
+          -H "Metadata: true" \
+          "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net" |
+          jq -er '.access_token'
+      )"
+
+      while IFS='=' read -r env_name secret_name; do
+        [[ -z "$${env_name}" ]] && continue
+        value="$(
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $${token}" \
+            "$${KEY_VAULT_URI}secrets/$${secret_name}?api-version=7.4" |
+            jq -er '.value'
+        )"
+        if [[ "$${value}" == *$'\n'* || "$${value}" == *$'\r'* ]]; then
+          echo "Secret $${secret_name} contains a newline and cannot be passed safely." >&2
+          exit 1
+        fi
+        printf '%s=%s\n' "$${env_name}" "$${value}" >>"$${runtime_env}"
+        unset value
+      done </etc/nordic-portfolio/secret-mappings
+      unset token
+
+      docker pull "$${PORTFOLIO_IMAGE}"
+      timeout --signal=TERM --kill-after=30 "$${JOB_TIMEOUT_SECONDS}" \
+        docker run --rm \
+          --name nordic-portfolio-job \
+          --user 65532:65532 \
+          --env-file "$${runtime_env}" \
+          --env PORTFOLIO_DATA_DIR=/data \
+          --volume /var/lib/nordic-portfolio:/data \
+          --read-only \
+          --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+          --cap-drop ALL \
+          --security-opt no-new-privileges:true \
+          --pids-limit 128 \
+          --memory "$${CONTAINER_MEMORY}" \
+          --cpus 0.75 \
+          "$${PORTFOLIO_IMAGE}"
+
+  - path: /etc/systemd/system/nordic-portfolio.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run the Nordic Portfolio scheduled job
+      Wants=network-online.target docker.service
+      After=network-online.target docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/run-nordic-portfolio
+      User=root
+      Group=root
+      UMask=0077
+      Nice=10
+      ProtectSystem=strict
+      ReadWritePaths=/run /var/lib/nordic-portfolio
+      ProtectHome=true
+      PrivateTmp=true
+      NoNewPrivileges=true
+      TimeoutStartSec=${job_timeout_seconds + 120}
+
+  - path: /etc/systemd/system/nordic-portfolio.timer
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Schedule the Nordic Portfolio job
+
+      [Timer]
+      OnCalendar=${schedule}
+      Persistent=true
+      RandomizedDelaySec=300
+      Unit=nordic-portfolio.service
+
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - install -d -m 0700 -o root -g root /etc/nordic-portfolio
+  - install -d -m 0750 -o 65532 -g 65532 /var/lib/nordic-portfolio
+  - systemctl enable --now docker.service
+  - systemctl daemon-reload
+  - systemctl enable --now nordic-portfolio.timer
+  - systemctl list-timers nordic-portfolio.timer --no-pager
+
+final_message: "Nordic Portfolio infrastructure bootstrap completed."

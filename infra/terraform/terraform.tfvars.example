@@ -1,0 +1,28 @@
+project_name        = "nordic-portfolio"
+location            = "swedencentral"
+admin_username      = "portfolioadmin"
+ssh_public_key_path = "~/.ssh/nordic_portfolio_azure_ed25519.pub"
+
+# Replace with a real, publicly readable, version-pinned container image.
+container_image = "ghcr.io/replace-me/nordic-portfolio:1.0.0"
+
+# Keep null to deny all inbound access. If direct SSH is required, use only
+# your current public IP, for example "203.0.113.10/32".
+admin_cidr = null
+
+# systemd OnCalendar expression, including the intended timezone.
+schedule = "Sun *-*-* 08:00:00 Europe/Stockholm"
+
+# These are names/references only. Never put secret values in this file.
+secret_mappings = {
+  AVANZA_CREDENTIAL = "avanza-credential"
+  NOTIFY_TOKEN      = "notify-token"
+}
+
+job_timeout_seconds = 900
+container_memory    = "512m"
+enable_backup       = true
+
+tags = {
+  environment = "personal"
+}
